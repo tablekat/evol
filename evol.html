@@ -1,0 +1,217 @@
+<script src="evol.js"></script>
+		<script src="https://unpkg.com/cytoscape/dist/cytoscape.min.js"></script>
+		<script src="https://unpkg.com/webcola/WebCola/cola.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-cola@2.5.1/cytoscape-cola.min.js"></script>
+
+
+<style>
+#world {
+	display: inline-flex;
+	flex-direction: column;
+	border: 1px solid rgba(0,0,0,0.05);
+	border-width: 1px 0px 0px 1px;
+}
+.worldRow {
+	display: flex;
+}
+.worldBox {
+	display: flex;
+	width: 8px;
+	height: 8px;
+	border: 1px solid rgba(0,0,0,0.051);
+	border-width: 0px 1px 1px 0px;
+}
+.worldItem {
+	width: 8px;
+	height: 8px;
+	border-radius: 8px;
+}
+#age-panel {
+	position: absolute;
+	bottom: 0;
+	right: 0;
+	margin: 10px;
+	padding: 8px;
+	border: 1px solid black;
+}
+#info-panel {
+	display: inline-block;
+	border: 1px solid black;
+	margin: 10px;
+	padding: 12px;
+	position: absolute;
+	top: 0;
+	right: 0;
+	background: white;
+	max-width: 400px;
+	width: 400px;
+}
+#neural-network {
+	display: inline-block;
+	max-width: 400px;
+	width: 400px;
+	height: 400px;
+}
+</style>
+
+<div id="world"></div>
+<span id="info-panel">
+	<span id="neural-network"></span>
+	<br/>
+	Age: <span id="organism-age"></span> / <span id="organism-max-age"></span><br/>
+	foodEaten: <span id="organism-foodEaten"></span><br/>
+	totalFoodEaten: <span id="organism-totalFoodEaten"></span><br/>
+	reproductionCost: <span id="organism-reproductionCost"></span><br/>
+</span>
+<span id="age-panel">
+	<span id="age">Loading...</span><br/>
+	<button type="button" onclick="javascript:window.ticksPerFrame = 0;">0</button>
+	<button onclick="javascript:window.ticksPerFrame = 1;">1</button>
+	<button onclick="javascript:window.ticksPerFrame = 10;">10</button>
+	<button onclick="javascript:window.ticksPerFrame = 100;">100</button>
+</span>
+
+<script>
+const domWorld = document.querySelector("#world");
+const domAge = document.querySelector("#age");
+const width = 100;
+const height = 100;
+let selectedItem = null;
+
+const worldItems = [];
+for(let i = 0; i < height; i++){
+	worldItems.push([]);
+	let domRow = document.createElement("div");
+	domRow.classList.add("worldRow");
+	domWorld.append(domRow);
+	for(let j = 0; j < width; j++){
+		let domBox = document.createElement("div");
+		domBox.classList.add("worldBox");
+		domRow.appendChild(domBox);
+		
+		let domItem = document.createElement("item");
+		domItem.classList.add("worldItem");
+		domBox.appendChild(domItem);
+		worldItems[i].push(domItem);
+	}
+}
+
+const world = new World(width, height);
+window.ticksPerFrame = 1;
+
+function renderWorld() {
+	for(let i = 0; i < height; i++){
+		for(let j = 0; j < width; j++){
+			// World grid internally uses x, y array.
+			const itemDom = worldItems[i][j];
+			const item = world.grid[j][i];
+			itemDom.style.backgroundColor = itemToRgb(item);
+			
+			if (item) {
+				itemDom.onclick = () => showInfoPanel(i, j);
+			} else {
+				itemDom.onclick = null;
+			}
+		}
+	}
+}
+
+function itemToRgb(item) {
+	if (!item) {
+		return "rgb(255, 255, 255)";
+	}
+	const rgbs = item.rgb.map(value => Math.floor(value * 255));
+	return `rgb(${rgbs[0]}, ${rgbs[1]}, ${rgbs[2]})`;
+}
+
+function animationStep() {
+	for (let i = 0; i < window.ticksPerFrame; ++i) {
+		world.runTick();
+	}
+	renderWorld();
+	
+	domAge.innerHTML = world.ageTicks;
+	if (selectedItem && selectedItem.type == "organism") {
+		document.querySelector("#organism-age").innerHTML = selectedItem.ageTicks;
+		document.querySelector("#organism-max-age").innerHTML = selectedItem.genome.lifespanTicks;
+		document.querySelector("#organism-foodEaten").innerHTML = selectedItem.foodEaten;
+		document.querySelector("#organism-totalFoodEaten").innerHTML = selectedItem.totalFoodEaten;
+		document.querySelector("#organism-reproductionCost").innerHTML = selectedItem.reproductionCost;
+	}
+
+	// window.requestAnimationFrame(animationStep);
+	window.setTimeout(animationStep, 33);
+}
+animationStep();
+
+function showInfoPanel(i, j) {
+	const domPanel = document.querySelector("#info-panel");
+	const item = world.grid[j][i];
+	selectedItem = item;
+	if (item.type != "organism") {
+		return;
+	}
+	
+	cytoscape({
+		container: document.querySelector("#neural-network"),
+
+		autounselectify: true,
+		
+		boxSelectionEnabled: false,
+
+		layout: {
+			name: 'cola'
+		},
+
+		style: [
+			{
+				selector: 'node',
+				css: {
+					'background-color': 'data(color)',
+					'content': 'data(label)',
+				}
+			},
+
+			{
+				selector: 'edge',
+				css: {
+					'line-color': 'data(color)',
+					'width': 'data(value)',
+					'target-arrow-color': 'data(color)',
+					'target-arrow-shape': 'triangle',
+					'curve-style': 'bezier',
+				}
+			}
+		],
+
+		elements: colaify(item.genome.neuronConnections),
+	});
+}
+
+function colaify(neuronConnections) {
+	const nodesSeen = new Set();
+	const nodes = [];
+	const edges = [];
+	for (let connection of neuronConnections) {
+		const startName = Object.keys(NEURONS).find(key => NEURONS[key] === connection.start);
+		const endName = Object.keys(NEURONS).find(key => NEURONS[key] === connection.end);
+		if (!nodesSeen.has(startName)) {
+			let nodeColor = "#f92411"; // output node color
+			if (startName in IN) {
+				nodeColor = "#a92411"; // input node color
+			}
+			nodes.push({data: {id: startName, label: startName, color: nodeColor}});
+			nodesSeen.add(startName);
+		}
+		if (!nodesSeen.has(endName)) {
+			let group = 2; // Output nodes
+			nodes.push({data: {id: endName, label: endName, color: "#f92411"}});
+			nodesSeen.add(endName);
+		}
+		const edgeColor = connection.weight < 0 ? "#f91111" : "#24f911";
+		edges.push({data: {source: startName, target: endName, value: Math.abs(connection.weight), color: edgeColor}});
+	}
+	return {nodes, edges};
+}
+
+</script>
